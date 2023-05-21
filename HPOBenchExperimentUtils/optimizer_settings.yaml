@@ -201,7 +201,7 @@ hpbandster_hb_eta_2:
 linucb:
   optimizer: linucb
   display_name: "LinUCB"
-  alpha: 0.1
+  alpha: 1.5
   num_samples: 64
 
 ...

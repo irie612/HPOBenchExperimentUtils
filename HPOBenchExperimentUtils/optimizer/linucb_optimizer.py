@@ -3,14 +3,14 @@ import json
 from pathlib import Path
 from typing import Dict, Union
 from HPOBenchExperimentUtils.core.bookkeeper import Bookkeeper
-from HPOBenchExperimentUtils.optimizer.base_optimizer import SingleFidelityOptimizer
+from HPOBenchExperimentUtils.optimizer.base_optimizer import SingleFidelityOptimizer, Optimizer
 import numpy as np
 import time
 
 _log = logging.getLogger(__name__)
 
-
-class LinUCBOptimizer(SingleFidelityOptimizer):
+# not sure if this should be single fidelity or standard optimizer
+class LinUCBOptimizer(Optimizer):
     def __init__(self, benchmark: Bookkeeper, settings: Dict, output_dir: Path, rng: Union[int, None] = 0):
         super().__init__(benchmark, settings, output_dir, rng)
         self.alpha = settings['alpha']
@@ -29,13 +29,15 @@ class LinUCBOptimizer(SingleFidelityOptimizer):
         A = np.stack((np.identity(self.num_hyperparameters),)*self.num_samples, axis=0)
         # init array b of shape (K x d) where each b[i] is a d-dimensional zero vector
         b = np.zeros((self.num_samples, self.num_hyperparameters))
-        
+
+        # init results list
         results = []
 
         # init timestep counter
         t = 0
         # repeat until true as the benchmark will stop the run
         while True:
+            # print(f'timestep: {t}')
             # init theta_hat of shape (K x d) where each theta_hat[i] is a d-dimensional zero vector
             theta_hat = np.zeros((self.num_samples, self.num_hyperparameters))
             # init ucb of shape (K x 1) where each ucb[i] is a scalar
@@ -45,6 +47,7 @@ class LinUCBOptimizer(SingleFidelityOptimizer):
                 theta_hat[i] = np.linalg.inv(A[i]) @ b[i]
                 # compute ucb
                 ucb[i] = theta_hat[i].T @ hc.get_array() + self.alpha * np.sqrt(hc.get_array().T @ np.linalg.inv(A[i]) @ hc.get_array())
+            # print(f'ucb: {ucb}')
             # select the hyperparameter configuration with the highest ucb with ties broken randomly and get its index in the array
             best_index = np.random.choice(np.flatnonzero(ucb == np.max(ucb)))
             # get the hyperparameter configuration with the highest ucb
@@ -52,7 +55,6 @@ class LinUCBOptimizer(SingleFidelityOptimizer):
             # evaluate the hyperparameter configuration with the highest ucb
             result = self.benchmark.objective_function(configuration_id= f"Config{best_index}", 
                                                        configuration=best_hc,
-                                                       fidelity={self.main_fidelity.name: self.max_budget},
                                                        rng=self.rng,
                                                        **self.settings_for_sending,
                                                        )
@@ -70,11 +72,16 @@ class LinUCBOptimizer(SingleFidelityOptimizer):
             # save the result
             self.__save_results({"num_evals": t,
                                  "best_config": best_hc.get_dictionary(),
-                                 "timestamp": time.time()})
+                                 "timestamp": time.time(),
+                                 "function_value": reward,
+                                 "config_name": f"Config{best_index}",})
 
             # update A and b
             A[best_index] += best_hc.get_array() @ best_hc.get_array().T
             b[best_index] += reward * best_hc.get_array()
+            # print(f'A: {A}')
+            # print(f'b: {b}')
+
             # increment timestep counter
             t += 1
 
