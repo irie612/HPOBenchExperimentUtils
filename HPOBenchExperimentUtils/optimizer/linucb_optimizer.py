@@ -1,10 +1,16 @@
+import logging
+import json
 from pathlib import Path
 from typing import Dict, Union
 from HPOBenchExperimentUtils.core.bookkeeper import Bookkeeper
-from HPOBenchExperimentUtils.optimizer.base_optimizer import Optimizer
+from HPOBenchExperimentUtils.optimizer.base_optimizer import SingleFidelityOptimizer
 import numpy as np
+import time
 
-class LinUCBOptimizer(Optimizer):
+_log = logging.getLogger(__name__)
+
+
+class LinUCBOptimizer(SingleFidelityOptimizer):
     def __init__(self, benchmark: Bookkeeper, settings: Dict, output_dir: Path, rng: Union[int, None] = 0):
         super().__init__(benchmark, settings, output_dir, rng)
         self.alpha = settings['alpha']
@@ -16,26 +22,62 @@ class LinUCBOptimizer(Optimizer):
         pass
 
     def run(self):
-        # sample num_samples hyperparameter configurations from the configuration space
-        # each configuration is a d-dimensional vector
-        hyperparameter_configurations = self.cs.sample_configuration(size=self.num_samples) # not sure if this is right look at the ConfigSpace docs
-        
+        # sample num_samples hyperparameter configurations from the configuration space. Each configuration is a d-dimensional vector
+        hyperparameter_configurations = self.cs.sample_configuration(size=self.num_samples)
+
         # init array A of shape (K x d x d) where each A[i] is a d x d identity matrix
         A = np.stack((np.identity(self.num_hyperparameters),)*self.num_samples, axis=0)
         # init array b of shape (K x d) where each b[i] is a d-dimensional zero vector
         b = np.zeros((self.num_samples, self.num_hyperparameters))
+        
+        results = []
+
         # init timestep counter
         t = 0
         # repeat until true as the benchmark will stop the run
         while True:
-            t += 1
-            
-            for hc in hyperparameter_configurations:
+            # init theta_hat of shape (K x d) where each theta_hat[i] is a d-dimensional zero vector
+            theta_hat = np.zeros((self.num_samples, self.num_hyperparameters))
+            # init ucb of shape (K x 1) where each ucb[i] is a scalar
+            ucb = np.zeros((self.num_samples, 1))
+            for i, hc in enumerate(hyperparameter_configurations):
                 # compute theta_hat
-                theta_hat = np.linalg.inv(A) @ b
-                break
-            break
-        print(self.cs)
-        print(f"alpha: {self.alpha}")
-        print(f"num_samples: {self.num_samples}")
-        print(f"num_hyperparameters: {self.num_hyperparameters}")
+                theta_hat[i] = np.linalg.inv(A[i]) @ b[i]
+                # compute ucb
+                ucb[i] = theta_hat[i].T @ hc.get_array() + self.alpha * np.sqrt(hc.get_array().T @ np.linalg.inv(A[i]) @ hc.get_array())
+            # select the hyperparameter configuration with the highest ucb with ties broken randomly and get its index in the array
+            best_index = np.random.choice(np.flatnonzero(ucb == np.max(ucb)))
+            # get the hyperparameter configuration with the highest ucb
+            best_hc = hyperparameter_configurations[best_index]
+            # evaluate the hyperparameter configuration with the highest ucb
+            result = self.benchmark.objective_function(configuration_id= f"Config{best_index}", 
+                                                       configuration=best_hc,
+                                                       fidelity={self.main_fidelity.name: self.max_budget},
+                                                       rng=self.rng,
+                                                       **self.settings_for_sending,
+                                                       )
+            # append the result to the results list
+            results.append((best_hc, result))
+            # get the used resources
+            resources = self.benchmark.resource_manager.get_used_resources()
+            # get the reward from the results
+            reward = result['function_value']
+            # log the result
+            _log.info(f'Config{best_index} - Result {reward:.4f} - '
+                      f'Time Used: {resources.total_time_used_in_s:.2f}'
+                      f'{self.benchmark.resource_manager.limits.time_limit_in_s}')
+            
+            # save the result
+            self.__save_results({"num_evals": t,
+                                 "best_config": best_hc.get_dictionary(),
+                                 "timestamp": time.time()})
+
+            # update A and b
+            A[best_index] += best_hc.get_array() @ best_hc.get_array().T
+            b[best_index] += reward * best_hc.get_array()
+            # increment timestep counter
+            t += 1
+
+    def __save_results(self, entry):
+        with open(self.output_dir / "trajectory.json", "a") as fh:
+            fh.write(json.dumps(entry) + "\n")
