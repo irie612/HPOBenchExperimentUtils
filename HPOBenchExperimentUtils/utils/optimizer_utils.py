@@ -38,6 +38,7 @@ class OptimizerEnum(Enum):
     OPTUNA_CMAES_HB = 'optuna_cmaes_hb'
     OPTUNA_RANDOMSEARCH = 'optuna_randomsearch'
     OPTUNA_TPE_MEDIAN = 'optuna_tpe_median'
+    LIN_UCB = 'linucb'
 
 
 def optimizer_str_to_enum(optimizer: Union[OptimizerEnum, str]) -> OptimizerEnum:
@@ -122,7 +123,8 @@ def optimizer_str_to_enum(optimizer: Union[OptimizerEnum, str]) -> OptimizerEnum
             return OptimizerEnum.OPTUNA_RANDOMSEARCH
         elif optimizer == 'optuna_tpe_median':
             return OptimizerEnum.OPTUNA_TPE_MEDIAN
-
+        elif optimizer == 'linucb':
+            return OptimizerEnum.LIN_UCB
         else:
             fail = True
     else:
@@ -204,6 +206,9 @@ def get_optimizer(optimizer_enum):
     elif optimizer_enum is OptimizerEnum.HEBO:
         from HPOBenchExperimentUtils.optimizer.hebo_optimizer import HEBOOptimizer
         optimizer = HEBOOptimizer
+    elif optimizer_enum is OptimizerEnum.LIN_UCB:
+        from HPOBenchExperimentUtils.optimizer.linucb_optimizer import LinUCBOptimizer
+        optimizer = LinUCBOptimizer
     else:
         raise ValueError(f'Unknown optimizer: {optimizer_enum}')
     return optimizer
